@@ -6,6 +6,8 @@
 #include <Button2.h>
 #include "esp_adc_cal.h"
 #include <WiFiUdp.h>
+#include "esp_wifi.h"
+
 
 #ifndef TFT_DISPOFF
 #define TFT_DISPOFF 0x28
@@ -48,6 +50,12 @@ typedef	struct 	s_data_task
 
 // typedef void(*t_task_func)(void *param);
 
+enum e_wifi_modes {
+	NONE_MODE = 0,
+	STA_MODE,
+	AP_MODE
+};
+
 
 
 t_data_task g_data_task[3];
@@ -60,11 +68,20 @@ TFT_eSPI tft = TFT_eSPI(); // Invoke custom library
 Button2 btn1(BUTTON_1);
 Button2 btn2(BUTTON_2);
 
+e_wifi_modes current_wifi_mode;
+// const char* ssid = "Freebox-0E3EAE";
+// const char* password =  "taigaest1chien";
 
-// const char* ssid = "Matrice";
-const char* ssid = "Freebox-0E3EAE";
-// const char* password =  "QGmatrice";
-const char* password =  "taigaest1chien";
+const char* ssid = "tripodesAP";
+const char* password =  "44448888";
+
+
+
+
+
+const char *APssid = "tripodesAP";
+const char *APpassword = "44448888";
+
 
 WiFiUDP Udp;
 unsigned int localUdpPort = 49141;
@@ -99,12 +116,12 @@ static const t_stop_pwm	g_stop_pwm[TASK_NUMBER] = {
 	(t_stop_pwm)stop_pwm2,
 };
 
-
+WiFiClass WiFiAP;
 
 bool	timersActives[3];
 int		pwmValues[3];
 int		timerPansements[3];
-hw_timer_t * timers[3];
+hw_timer_t * timers[4] = {NULL, NULL, NULL, NULL};
 
 
 
@@ -136,6 +153,37 @@ const char* eTaskGetState_to_string(int ah) {
 
 
 
+void button_init()
+{
+    btn1.setPressedHandler([](Button2 & b) {
+        Serial.println("Bouton A pressed");
+		if (current_wifi_mode == NONE_MODE)
+		{
+			current_wifi_mode = STA_MODE;
+		}
+	});
+
+    btn2.setPressedHandler([](Button2 & b) {
+        Serial.println("Bouton B pressed");
+		if (current_wifi_mode == NONE_MODE)
+		{
+			current_wifi_mode = AP_MODE; 
+		}
+	});
+}
+
+void button_loop()
+{
+    btn1.loop();
+    btn2.loop();
+}
+
+void  call_buttons(void)
+{
+  button_loop();
+}
+
+
 void showVoltage()
 {
 	static uint64_t timeStamp = 0;
@@ -151,10 +199,14 @@ void showVoltage()
 	}
 }
 
-void setup() {
-	// put your setup code here, to run once:
-	Serial.begin(115200);
+
+void sta_setup()
+{
+	WiFi.mode(WIFI_STA);
 	WiFi.begin(ssid, password);
+	tft.drawString("Connecting", tft.width() / 2, tft.height() / 2);
+	uint64_t timeStamp = millis();
+	
 	timersActives[0] = false;
 	timersActives[1] = false;
 	timersActives[2] = false;
@@ -163,9 +215,13 @@ void setup() {
 	pwmValues[1] = 0;
 	pwmValues[2] = 0;
 
+
 	timers[0] = timerBegin(0, 80, true);
 	timers[1] = timerBegin(1, 80, true);
 	timers[2] = timerBegin(2, 80, true);
+
+
+
 
 	ledcSetup(motorChannel1, motorFreq, motorResolution);
 	ledcSetup(motorChannel2, motorFreq, motorResolution);
@@ -174,29 +230,6 @@ void setup() {
 	ledcAttachPin(MOTOR_2, motorChannel2);
 	ledcAttachPin(MOTOR_3, motorChannel3);
 
-
-
-	pinMode(ADC_EN, OUTPUT);
-	digitalWrite(ADC_EN, HIGH);
-	tft.init();
-	tft.setRotation(0);
-	tft.fillScreen(TFT_BLACK);
-
-
-
-	if (TFT_BL > 0) {                           // TFT_BL has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
-			pinMode(TFT_BL, OUTPUT);                // Set backlight pin to output mode
-			digitalWrite(TFT_BL, TFT_BACKLIGHT_ON); // Turn backlight on. TFT_BACKLIGHT_ON has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
-	}
-
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_GREEN);
-    tft.setCursor(0, 0);
-    tft.setTextDatum(MC_DATUM);
-
-	tft.drawString("Connecting", tft.width() / 2, tft.height() / 2);
-	uint64_t timeStamp = millis();
-	
 	Serial.println("Connecting");
 	while (WiFi.status() != WL_CONNECTED)
 	{
@@ -219,6 +252,84 @@ void setup() {
 	Serial.printf("Now listening at IP %s, UDP port %d\n", WiFi.localIP().toString().c_str(), localUdpPort);
 }
 
+void ap_setup()
+{
+	WiFi.mode(WIFI_AP);
+	WiFi.softAP(APssid, APpassword);
+	IPAddress myIP = WiFi.softAPIP();
+	Serial.print("AP IP address: ");
+	Serial.println(myIP);
+	tft.printf("AP addr: %s\n", myIP.toString().c_str());
+}
+
+
+
+void setup() {
+	// put your setup code here, to run once:
+	current_wifi_mode = NONE_MODE;
+	Serial.begin(115200);
+	WiFi.mode(WIFI_STA);
+	WiFi.begin(ssid, password);
+
+  // WiFiAP.begin(APssid, APpassword);
+
+
+
+				
+	timers[3] = timerBegin(3, 80, true);
+  timerAttachInterrupt(timers[3], &call_buttons, false);
+  timerAlarmWrite(timers[3], 50 * 1000, true);
+  timerAlarmEnable(timers[3]);
+  button_init();
+
+	pinMode(ADC_EN, OUTPUT);
+	digitalWrite(ADC_EN, HIGH);
+	tft.init();
+	tft.setRotation(0);
+	tft.fillScreen(TFT_BLACK);
+
+
+
+	if (TFT_BL > 0) {                           // TFT_BL has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
+			pinMode(TFT_BL, OUTPUT);                // Set backlight pin to output mode
+			digitalWrite(TFT_BL, TFT_BACKLIGHT_ON); // Turn backlight on. TFT_BACKLIGHT_ON has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
+	}
+
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_WHITE);
+    tft.setCursor(0, 0);
+    tft.setTextDatum(MC_DATUM);
+	tft.printf("Please selected your \nmode \n(with bottom buttons)");
+	tft.setCursor(0, 230);
+    tft.setTextColor(TFT_RED);
+	tft.printf("AP mode");
+	tft.setCursor(85, 230);
+    tft.setTextColor(TFT_BLUE);
+	tft.printf("STA mode");
+	tft.setCursor(0, 0);
+
+
+	for(;;)
+	{
+		Serial.print("tour de boucle :");
+		Serial.println(current_wifi_mode);
+		if (current_wifi_mode == STA_MODE)
+		{
+			sta_setup();
+			break;
+		}
+		else if (current_wifi_mode == AP_MODE)
+		{
+			ap_setup();
+			break;
+		}	
+		delay(100);
+
+	}
+
+
+}
+
 
 
 
@@ -234,10 +345,29 @@ void drawMotorsActivity()
     drawing_sprite.setTextColor(TFT_GREEN);
     drawing_sprite.setTextDatum(MC_DATUM);
 	drawing_sprite.setCursor(0, 0);
-	drawing_sprite.printf("Ssid : %s\n\nIp : %s\n\nUdp port : %d\n\n", ssid,WiFi.localIP().toString().c_str(), localUdpPort);
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("Ssid : ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%s\n\n", ssid);
+
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("Ip : ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%s\n\n", WiFi.localIP().toString().c_str());
+
+
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("Udp port : ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%d\n\n", localUdpPort);
+
+	// %s\n\nIp : %s\n\nUdp port : %d\n\n", ssid,WiFi.localIP().toString().c_str(), localUdpPort);
 	uint16_t v = analogRead(ADC_PIN);
 	float battery_voltage = ((float)v / 4095.0) * 2.0 * 3.3 * (vref / 1000.0);
-	drawing_sprite.printf("Voltage : %.2fv\n", battery_voltage);
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("Voltage : ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%.2fv\n", battery_voltage);
 
 	
 	//uint32_t color1 = TFT_BLUE;
@@ -270,6 +400,83 @@ void drawMotorsActivity()
 	drawing_sprite.deleteSprite();
 	
 }
+
+
+void drawNetworkActivity()
+{
+	TFT_eSprite drawing_sprite = TFT_eSprite(&tft);
+
+  drawing_sprite.setColorDepth(8);
+  drawing_sprite.createSprite(tft.width(), tft.height());
+	drawing_sprite.fillSprite(TFT_BLACK);
+	    drawing_sprite.setTextSize(1);
+		drawing_sprite.setTextFont(1);
+    drawing_sprite.setTextDatum(MC_DATUM);
+	drawing_sprite.setCursor(0, 0);
+	uint16_t v = analogRead(ADC_PIN);
+	float battery_voltage = ((float)v / 4095.0) * 2.0 * 3.3 * (vref / 1000.0);
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("AP SSID: ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%s\n", APssid);
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("AP PSSWD: ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%s\n", APpassword);
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("Voltage : ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%.2fv\n", battery_voltage);
+    drawing_sprite.setTextColor(TFT_RED);
+	drawing_sprite.printf("Connected clients : ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+	drawing_sprite.printf("%d\n", WiFi.softAPgetStationNum());
+
+	
+	  wifi_sta_list_t wifi_sta_list;
+  tcpip_adapter_sta_list_t adapter_sta_list;
+ 
+  memset(&wifi_sta_list, 0, sizeof(wifi_sta_list));
+  memset(&adapter_sta_list, 0, sizeof(adapter_sta_list));
+ 
+  esp_wifi_ap_get_sta_list(&wifi_sta_list);
+  tcpip_adapter_get_sta_list(&wifi_sta_list, &adapter_sta_list);
+ 
+  for (int i = 0; i < adapter_sta_list.num; i++) {
+
+    drawing_sprite.setTextColor(TFT_YELLOW);
+
+	  drawing_sprite.println("");
+ 
+    tcpip_adapter_sta_info_t station = adapter_sta_list.sta[i];
+ 
+    drawing_sprite.setTextColor(TFT_BLUE);
+
+    drawing_sprite.print("MAC: ");
+    drawing_sprite.setTextColor(TFT_WHITE);
+ 
+    for(int i = 0; i< 6; i++){
+      
+      drawing_sprite.printf("%02X", station.mac[i]);  
+      if(i<5)drawing_sprite.print(":");
+    }
+    drawing_sprite.setTextColor(TFT_BLUE);
+ 
+    drawing_sprite.print("\nIP:  ");  
+    drawing_sprite.setTextColor(TFT_WHITE);
+
+    drawing_sprite.println(ip4addr_ntoa(&(station.ip)));    
+  }
+ 
+
+
+
+
+	drawing_sprite.pushSprite(0, 0);
+	drawing_sprite.deleteSprite();
+	
+}
+
 
 
 void	set_pwm0(int pwm)
@@ -322,9 +529,9 @@ void	stop_pwm2(void)
 	timerPansements[2]--;
 }
 
-
-void loop() {
-	int packetSize = Udp.parsePacket();
+void look_for_udp_message()
+{
+int packetSize = Udp.parsePacket();
 	if (packetSize)
 	{
 		int len = Udp.read(incomingPacket, 255);
@@ -396,7 +603,19 @@ void loop() {
 		
 		
 	}
-	drawMotorsActivity();
+}
+
+
+void loop() {
+	if (current_wifi_mode == STA_MODE)
+	{
+		look_for_udp_message();
+		drawMotorsActivity();
+	}
+	else if (current_wifi_mode == AP_MODE)
+	{
+		drawNetworkActivity();
+	}
 	//Serial.println(".");
 	delay(100);
 	// put your main code here, to run repeatedly:
